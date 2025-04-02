@@ -375,7 +375,7 @@ pub trait RxToken {
     fn consume<R, F>(self, f: F) -> R
     where
         F: FnOnce(&[u8]) -> R;
-
+    fn preprocess(&self, _socket: &mut SocketSet<'_>){}
     /// The Packet ID associated with the frame received by this [`RxToken`]
     fn meta(&self) -> PacketMeta {
         PacketMeta::default()

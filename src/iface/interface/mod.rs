@@ -572,77 +572,73 @@ impl Interface {
         }
     }
 
-    fn socket_ingress(
-        &mut self,
-        device: &mut (impl Device + ?Sized),
-        sockets: &mut SocketSet<'_>,
-    ) -> PollIngressSingleResult {
-        let Some((rx_token, tx_token)) = device.receive(self.inner.now) else {
-            return PollIngressSingleResult::None;
-        };
-
-        let rx_meta = rx_token.meta();
-        rx_token.consume(|frame| {
-            if frame.is_empty() {
-                return PollIngressSingleResult::PacketProcessed;
-            }
-
-            match self.inner.caps.medium {
-                #[cfg(feature = "medium-ethernet")]
-                Medium::Ethernet => {
-                    if let Some(packet) =
-                        self.inner
-                            .process_ethernet(sockets, rx_meta, frame, &mut self.fragments)
-                    {
-                        if let Err(err) =
-                            self.inner.dispatch(tx_token, packet, &mut self.fragmenter)
+    fn socket_ingress<D>(&mut self, device: &mut D, sockets: &mut SocketSet<'_>) -> bool
+    where
+        D: Device + ?Sized,
+    {
+        // track if handle any packet receive and transmit
+        let mut processed_any = false;
+        //if receive successfully, then return receive and send token
+        while let Some((rx_token, tx_token)) = device.receive(self.inner.now) {
+            rx_token.preprocess(sockets);
+            let rx_meta = rx_token.meta();
+            rx_token.consume(|frame| {
+                match self.inner.caps.medium {
+                    #[cfg(feature = "medium-ethernet")]
+                    Medium::Ethernet => {
+                        if let Some(packet) = self.inner.process_ethernet(
+                            sockets,
+                            rx_meta,
+                            frame,
+                            &mut self.fragments,
+                        ) {
+                            if let Err(err) =
+                                self.inner.dispatch(tx_token, packet, &mut self.fragmenter)
+                            {
+                                net_debug!("Failed to send response: {:?}", err);
+                            }
+                        }
+                    }
+                    #[cfg(feature = "medium-ip")]
+                    Medium::Ip => {
+                        if let Some(packet) =
+                            self.inner
+                                .process_ip(sockets, rx_meta, frame, &mut self.fragments)
                         {
-                            net_debug!("Failed to send response: {:?}", err);
+                            if let Err(err) = self.inner.dispatch_ip(
+                                tx_token,
+                                PacketMeta::default(),
+                                packet,
+                                &mut self.fragmenter,
+                            ) {
+                                net_debug!("Failed to send response: {:?}", err);
+                            }
                         }
                     }
-                }
-                #[cfg(feature = "medium-ip")]
-                Medium::Ip => {
-                    if let Some(packet) =
-                        self.inner
-                            .process_ip(sockets, rx_meta, frame, &mut self.fragments)
-                    {
-                        if let Err(err) = self.inner.dispatch_ip(
-                            tx_token,
-                            PacketMeta::default(),
-                            packet,
-                            &mut self.fragmenter,
+                    #[cfg(feature = "medium-ieee802154")]
+                    Medium::Ieee802154 => {
+                        if let Some(packet) = self.inner.process_ieee802154(
+                            sockets,
+                            rx_meta,
+                            frame,
+                            &mut self.fragments,
                         ) {
-                            net_debug!("Failed to send response: {:?}", err);
+                            if let Err(err) = self.inner.dispatch_ip(
+                                tx_token,
+                                PacketMeta::default(),
+                                packet,
+                                &mut self.fragmenter,
+                            ) {
+                                net_debug!("Failed to send response: {:?}", err);
+                            }
                         }
                     }
                 }
-                #[cfg(feature = "medium-ieee802154")]
-                Medium::Ieee802154 => {
-                    if let Some(packet) =
-                        self.inner
-                            .process_ieee802154(sockets, rx_meta, frame, &mut self.fragments)
-                    {
-                        if let Err(err) = self.inner.dispatch_ip(
-                            tx_token,
-                            PacketMeta::default(),
-                            packet,
-                            &mut self.fragmenter,
-                        ) {
-                            net_debug!("Failed to send response: {:?}", err);
-                        }
-                    }
-                }
-            }
+                processed_any = true;
+            });
+        }
 
-            // TODO: Propagate the PollIngressSingleResult from deeper.
-            // There's many received packets that we process but can't cause sockets
-            // to change state. For example IP fragments, multicast stuff, ICMP pings
-            // if they dont't match any raw socket...
-            // We should return `PacketProcessed` for these to save the user from
-            // doing useless socket polls.
-            PollIngressSingleResult::SocketStateChanged
-        })
+        processed_any
     }
 
     fn socket_egress(
