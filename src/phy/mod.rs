@@ -88,6 +88,7 @@ impl<'a> phy::TxToken for StmPhyTxToken<'a> {
 "##
 )]
 
+use crate::iface::SocketSet;
 use crate::time::Instant;
 
 #[cfg(all(

@@ -572,19 +572,19 @@ impl Interface {
         }
     }
 
-    fn socket_ingress<D>(&mut self, device: &mut D, sockets: &mut SocketSet<'_>) -> bool
-    where
-        D: Device + ?Sized,
-    {
+    fn socket_ingress(
+        &mut self,
+        device: &mut (impl Device + ?Sized),
+        sockets: &mut SocketSet<'_>,
+    ) -> PollIngressSingleResult {
         // track if handle any packet receive and transmit
-        let mut processed_any = false;
+        let mut processed_any = PollIngressSingleResult::None;
         //if receive successfully, then return receive and send token
-        while let Some((rx_token, tx_token)) = device.receive(self.inner.now) {
+        while let Some((rx_token, tx_token)) = device.receive(self.inner.now){
             rx_token.preprocess(sockets);
             let rx_meta = rx_token.meta();
-            rx_token.consume(|frame| {
+            rx_token.consume(|frame|{
                 match self.inner.caps.medium {
-                    #[cfg(feature = "medium-ethernet")]
                     Medium::Ethernet => {
                         if let Some(packet) = self.inner.process_ethernet(
                             sockets,
@@ -598,8 +598,7 @@ impl Interface {
                                 net_debug!("Failed to send response: {:?}", err);
                             }
                         }
-                    }
-                    #[cfg(feature = "medium-ip")]
+                    },
                     Medium::Ip => {
                         if let Some(packet) =
                             self.inner
@@ -614,8 +613,7 @@ impl Interface {
                                 net_debug!("Failed to send response: {:?}", err);
                             }
                         }
-                    }
-                    #[cfg(feature = "medium-ieee802154")]
+                    },
                     Medium::Ieee802154 => {
                         if let Some(packet) = self.inner.process_ieee802154(
                             sockets,
@@ -632,13 +630,12 @@ impl Interface {
                                 net_debug!("Failed to send response: {:?}", err);
                             }
                         }
-                    }
+                    },
                 }
-                processed_any = true;
+                processed_any = PollIngressSingleResult::SocketStateChanged;
             });
         }
-
-        processed_any
+        return processed_any;
     }
 
     fn socket_egress(
