@@ -585,6 +585,7 @@ impl Interface {
             let rx_meta = rx_token.meta();
             rx_token.consume(|frame|{
                 match self.inner.caps.medium {
+                    #[cfg(feature = "medium-ethernet")]
                     Medium::Ethernet => {
                         if let Some(packet) = self.inner.process_ethernet(
                             sockets,
@@ -599,6 +600,7 @@ impl Interface {
                             }
                         }
                     },
+                    #[cfg(feature = "medium-ip")]
                     Medium::Ip => {
                         if let Some(packet) =
                             self.inner
@@ -614,6 +616,7 @@ impl Interface {
                             }
                         }
                     },
+                    #[cfg(feature = "medium-ieee802154")]
                     Medium::Ieee802154 => {
                         if let Some(packet) = self.inner.process_ieee802154(
                             sockets,
