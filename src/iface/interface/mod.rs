@@ -457,14 +457,13 @@ impl Interface {
                 PollIngressSingleResult::PacketProcessed => {}
                 PollIngressSingleResult::SocketStateChanged => res = PollResult::SocketStateChanged,
             }
-        }
+            // Process egress.
+            match self.poll_egress(timestamp, device, sockets) {
+                PollResult::None => break,
+                PollResult::SocketStateChanged => res = PollResult::SocketStateChanged,
+            }
 
-        // Process egress.
-        match self.poll_egress(timestamp, device, sockets) {
-            PollResult::None => {}
-            PollResult::SocketStateChanged => res = PollResult::SocketStateChanged,
         }
-
         res
     }
 
