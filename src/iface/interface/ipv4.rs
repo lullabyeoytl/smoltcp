@@ -7,14 +7,14 @@ impl Interface {
     /// processed or emitted, and thus, whether the readiness of any socket might
     /// have changed.
     #[cfg(feature = "proto-ipv4-fragmentation")]
-    pub(super) fn ipv4_egress(&mut self, device: &mut (impl Device + ?Sized)) {
+    pub(super) fn ipv4_egress(&mut self, device: &mut (impl Device + ?Sized)) -> bool {
         // Reset the buffer when we transmitted everything.
         if self.fragmenter.finished() {
             self.fragmenter.reset();
         }
 
         if self.fragmenter.is_empty() {
-            return;
+            return false;
         }
 
         let pkt = &self.fragmenter;
@@ -22,8 +22,10 @@ impl Interface {
             if let Some(tx_token) = device.transmit(self.inner.now) {
                 self.inner
                     .dispatch_ipv4_frag(tx_token, &mut self.fragmenter);
+                return true;
             }
         }
+        false
     }
 }
 

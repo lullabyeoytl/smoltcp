@@ -450,54 +450,51 @@ impl Interface {
         #[cfg(feature = "_proto-fragmentation")]
         self.fragments.assembler.remove_expired(timestamp);
 
-        // Process ingress while there's packets available.
-        loop {
-            match self.socket_ingress(device, sockets) {
-                PollIngressSingleResult::None => break,
-                PollIngressSingleResult::PacketProcessed => {}
-                PollIngressSingleResult::SocketStateChanged => res = PollResult::SocketStateChanged,
-            }
-            // Process egress.
-            match self.poll_egress(timestamp, device, sockets) {
-                PollResult::None => break,
-                PollResult::SocketStateChanged => res = PollResult::SocketStateChanged,
-            }
-
-        }
-        res
-    }
-
-    /// Transmit packets queued in the sockets.
-    ///
-    /// This function returns a value indicating whether the state of any socket
-    /// might have changed.
-    ///
-    /// This is guaranteed to always perform a bounded amount of work.
-    pub fn poll_egress(
-        &mut self,
-        timestamp: Instant,
-        device: &mut (impl Device + ?Sized),
-        sockets: &mut SocketSet<'_>,
-    ) -> PollResult {
-        self.inner.now = timestamp;
-
         match self.inner.caps.medium {
             #[cfg(feature = "medium-ieee802154")]
-            Medium::Ieee802154 => {
+            Medium::Ieee802154 =>
+            {
                 #[cfg(feature = "proto-sixlowpan-fragmentation")]
-                self.sixlowpan_egress(device);
+                if self.sixlowpan_egress(device) {
+                    return PollResult::SocketStateChanged;
+                }
             }
             #[cfg(any(feature = "medium-ethernet", feature = "medium-ip"))]
-            _ => {
+            _ =>
+            {
                 #[cfg(feature = "proto-ipv4-fragmentation")]
-                self.ipv4_egress(device);
+                if self.ipv4_egress(device) {
+                    return PollResult::SocketStateChanged;
+                }
             }
         }
 
-        #[cfg(feature = "multicast")]
-        self.multicast_egress(device);
-
-        self.socket_egress(device, sockets)
+        // Process ingress while there's packets available.
+        loop {
+            let mut tracking_changes = false;
+            match self.socket_ingress(device, sockets) {
+                PollIngressSingleResult::None => {},
+                PollIngressSingleResult::PacketProcessed => {}
+                PollIngressSingleResult::SocketStateChanged => {
+                    tracking_changes = true;
+                },
+            }
+            // Process egress.
+            match self.socket_egress(device, sockets) {
+                PollResult::None => {},
+                PollResult::SocketStateChanged => tracking_changes = true,
+            }
+            #[cfg(feature = "multicast")]
+            {
+                tracking_changes |=  self.multicast_egress(device) ;
+            }
+            if tracking_changes {
+                res = PollResult::SocketStateChanged;
+            }else {
+                break;
+            }
+        }
+        res
     }
 
     /// Process one incoming packet queued in the device.

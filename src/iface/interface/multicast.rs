@@ -184,7 +184,7 @@ impl Interface {
     /// - Send join/leave packets according to the multicast group state.
     /// - Depending on `igmp_report_state` and the therein contained
     ///   timeouts, send IGMP membership reports.
-    pub(crate) fn multicast_egress(&mut self, device: &mut (impl Device + ?Sized)) {
+    pub(crate) fn multicast_egress(&mut self, device: &mut (impl Device + ?Sized)) -> bool {
         // Process multicast joins.
         while let Some((&addr, _)) = self
             .inner
@@ -198,13 +198,15 @@ impl Interface {
                 IpAddress::Ipv4(addr) => {
                     if let Some(pkt) = self.inner.igmp_report_packet(IgmpVersion::Version2, addr) {
                         let Some(tx_token) = device.transmit(self.inner.now) else {
-                            break;
+                            return false;
                         };
 
                         // NOTE(unwrap): packet destination is multicast, which is always routable and doesn't require neighbor discovery.
                         self.inner
                             .dispatch_ip(tx_token, PacketMeta::default(), pkt, &mut self.fragmenter)
                             .unwrap();
+                    }else {
+                        return false;
                     }
                 }
                 #[cfg(feature = "proto-ipv6")]
@@ -214,13 +216,15 @@ impl Interface {
                         addr,
                     )]) {
                         let Some(tx_token) = device.transmit(self.inner.now) else {
-                            break;
+                            return false;
                         };
 
                         // NOTE(unwrap): packet destination is multicast, which is always routable and doesn't require neighbor discovery.
                         self.inner
                             .dispatch_ip(tx_token, PacketMeta::default(), pkt, &mut self.fragmenter)
                             .unwrap();
+                    }else {
+                        return false;
                     }
                 }
             }
@@ -246,13 +250,15 @@ impl Interface {
                 IpAddress::Ipv4(addr) => {
                     if let Some(pkt) = self.inner.igmp_leave_packet(addr) {
                         let Some(tx_token) = device.transmit(self.inner.now) else {
-                            break;
+                            return false;
                         };
 
                         // NOTE(unwrap): packet destination is multicast, which is always routable and doesn't require neighbor discovery.
                         self.inner
                             .dispatch_ip(tx_token, PacketMeta::default(), pkt, &mut self.fragmenter)
                             .unwrap();
+                    }else {
+                        return false;
                     }
                 }
                 #[cfg(feature = "proto-ipv6")]
@@ -262,13 +268,15 @@ impl Interface {
                         addr,
                     )]) {
                         let Some(tx_token) = device.transmit(self.inner.now) else {
-                            break;
+                            return false;
                         };
 
                         // NOTE(unwrap): packet destination is multicast, which is always routable and doesn't require neighbor discovery.
                         self.inner
                             .dispatch_ip(tx_token, PacketMeta::default(), pkt, &mut self.fragmenter)
                             .unwrap();
+                    }else {
+                        return false;
                     }
                 }
             }
@@ -291,7 +299,11 @@ impl Interface {
                             .dispatch_ip(tx_token, PacketMeta::default(), pkt, &mut self.fragmenter)
                             .unwrap();
                         self.inner.multicast.igmp_report_state = IgmpReportState::Inactive;
+                    }else {
+                        return false;
                     }
+                }else {
+                    return false;
                 }
             }
             IgmpReportState::ToGeneralQuery {
@@ -335,15 +347,18 @@ impl Interface {
                                         interval,
                                         next_index: next_index + 1,
                                     };
+                            }else {
+                                return false;
                             }
                         }
                     }
                     None => {
                         self.inner.multicast.igmp_report_state = IgmpReportState::Inactive;
+                        return false;
                     }
                 }
             }
-            _ => {}
+            _ => {return false;}
         }
         #[cfg(feature = "proto-ipv6")]
         match self.inner.multicast.mld_report_state {
@@ -367,7 +382,9 @@ impl Interface {
                         self.inner
                             .dispatch_ip(tx_token, PacketMeta::default(), pkt, &mut self.fragmenter)
                             .unwrap();
-                    };
+                    }else{
+                        return false;
+                    }
                 };
                 self.inner.multicast.mld_report_state = MldReportState::Inactive;
             }
@@ -380,11 +397,15 @@ impl Interface {
                             .dispatch_ip(tx_token, PacketMeta::default(), pkt, &mut self.fragmenter)
                             .unwrap();
                     }
+                    else {
+                        return false;
+                    }
                 }
                 self.inner.multicast.mld_report_state = MldReportState::Inactive;
             }
-            _ => {}
+            _ => {return false;}
         }
+        return true;
     }
 }
 
