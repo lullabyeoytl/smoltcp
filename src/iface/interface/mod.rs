@@ -471,30 +471,45 @@ impl Interface {
 
         // Process ingress while there's packets available.
         loop {
-            let mut tracking_changes = false;
             match self.socket_ingress(device, sockets) {
-                PollIngressSingleResult::None => {},
+                PollIngressSingleResult::None => break,
                 PollIngressSingleResult::PacketProcessed => {}
-                PollIngressSingleResult::SocketStateChanged => {
-                    tracking_changes = true;
-                },
-            }
-            // Process egress.
-            match self.socket_egress(device, sockets) {
-                PollResult::None => {},
-                PollResult::SocketStateChanged => tracking_changes = true,
-            }
-            #[cfg(feature = "multicast")]
-            {
-                tracking_changes |=  self.multicast_egress(device) ;
-            }
-            if tracking_changes {
-                res = PollResult::SocketStateChanged;
-            }else {
-                break;
+                PollIngressSingleResult::SocketStateChanged => res = PollResult::SocketStateChanged,
             }
         }
+        // Process egress.
+        match self.poll_egress(timestamp, device, sockets) {
+            PollResult::None => {}
+            PollResult::SocketStateChanged => res = PollResult::SocketStateChanged,
+        }
         res
+    }
+
+    pub fn poll_egress(
+        &mut self,
+        timestamp: Instant,
+        device: &mut (impl Device + ?Sized),
+        sockets: &mut SocketSet<'_>,
+    ) -> PollResult {
+        self.inner.now = timestamp;
+
+        match self.inner.caps.medium {
+            #[cfg(feature = "medium-ieee802154")]
+            Medium::Ieee802154 => {
+                #[cfg(feature = "proto-sixlowpan-fragmentation")]
+                self.sixlowpan_egress(device);
+            }
+            #[cfg(any(feature = "medium-ethernet", feature = "medium-ip"))]
+            _ => {
+                #[cfg(feature = "proto-ipv4-fragmentation")]
+                self.ipv4_egress(device);
+            }
+        }
+
+        #[cfg(feature = "multicast")]
+        self.multicast_egress(device);
+
+        self.socket_egress(device, sockets)
     }
 
     /// Process one incoming packet queued in the device.
@@ -580,6 +595,10 @@ impl Interface {
             rx_token.preprocess(sockets);
             let rx_meta = rx_token.meta();
             rx_token.consume(|frame|{
+                if frame.is_empty() {
+                    processed_any =  PollIngressSingleResult::PacketProcessed;
+                    return processed_any;
+                }
                 match self.inner.caps.medium {
                     #[cfg(feature = "medium-ethernet")]
                     Medium::Ethernet => {
@@ -632,10 +651,12 @@ impl Interface {
                     },
                 }
                 processed_any = PollIngressSingleResult::SocketStateChanged;
+                processed_any
             });
         }
         return processed_any;
     }
+
 
     fn socket_egress(
         &mut self,
